@@ -16,8 +16,15 @@
 static void printValues();
 String hydroThermoBaric();
 String nitrousOxide();
+String initializeThingSpeakJson();
+String finalizeThingSpeakJson(String);
+String pendingUpdates();
 
 Adafruit_BME280 bme; // I2C
+
+unsigned long samplingInterval = 0;
+unsigned long updateInterval = 2*1000; //2*60*1000
+String updates;
 
 void setup() {
     Serial.begin(115200);
@@ -42,6 +49,8 @@ void setup() {
                      .callback = hydroThermoBaric},
                     {.name = "/nitrousOxide",
                      .callback = nitrousOxide},
+                    {.name = "/pendingUpdates",
+                     .callback = pendingUpdates}
                  };
     serverSetup(apis, sizeof(apis)/sizeof(apis[0]));
 
@@ -51,15 +60,16 @@ void setup() {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
     }
 
+    /*
     Serial.println("-- Default Test --");
     Serial.println("normal mode, 16x oversampling for all, filter off,");
     Serial.println("0.5ms standby period");
-    
+    */  
     
     // For more details on the following scenarious, see chapter
     // 3.5 "Recommended modes of operation" in the datasheet
     
-/*
+
     // weather monitoring
     Serial.println("-- Weather Station Scenario --");
     Serial.println("forced mode, 1x temperature / 1x humidity / 1x pressure oversampling,");
@@ -71,8 +81,8 @@ void setup() {
                     Adafruit_BME280::FILTER_OFF   );
                       
     // suggested rate is 1/60Hz (1m)
-    delayTime = 60000; // in milliseconds
-*/
+    samplingInterval = 1*1000; //60000; // in milliseconds
+
 
 /*    
     // humidity sensing
@@ -132,20 +142,53 @@ void setup() {
 */
 
     Serial.println();
+
+    updates = initializeThingSpeakJson();
 }
 
 
 void loop() {
 
+    unsigned long currentTime = millis();
+
+    // Take care of any incoming HTTP requests
     handleClient();
 
-    // Only needed in forced mode! In normal mode, you can remove the next line.
-    //bme.takeForcedMeasurement(); // has no effect in normal mode
+    unsigned long lastSamplingTime = currentTime - samplingInterval;
+    if (currentTime - lastSamplingTime >= samplingInterval)
+    {
+        lastSamplingTime = currentTime;
 
-    
-    
-    //printValues();
-    //delay(5000);
+        // Only needed in forced mode! In normal mode, you can remove the next line.
+        bme.takeForcedMeasurement(); // has no effect in normal mode
+
+        updates = updates + hydroThermoBaric();
+    }
+
+
+    unsigned long lastUpdateTime = currentTime - updateInterval;
+    if (currentTime - lastUpdateTime >= updateInterval)
+    {
+        lastUpdateTime = currentTime;
+
+
+    }
+}
+
+String initializeThingSpeakJson()
+{
+    return String("{ \"write_api_key\" : " + THNGSPK_WRITE_API_KEY + ", "
+                    "\"updates\" : [");
+}
+
+String finalizeThingSpeakJson(String json)
+{
+    return json + "] }";
+}
+
+String pendingUpdates()
+{
+    return finalizeThingSpeakJson(updates);
 }
 
 String nitrousOxide()
@@ -171,14 +214,16 @@ String nitrousOxide()
 String hydroThermoBaric()
 {
     printValues();
-    char response[128]; //68
-    snprintf(response, sizeof(response), "{ \"temperature\" : %.2f, "   // 18+5+2 chars
-                                           "\"pressure\" : %.2f, "      // 13+7+2 chars
-                                           "\"humidity\" : %.2f }",     // 13+5+2 chars 
-                                        bme.readTemperature(),
-                                        bme.readPressure(),
-                                        bme.readHumidity());
-    return String(response);
+    char update[128]; //78
+    snprintf(update, sizeof(update), "{ \"delta_t\" : %lu, "    // 13+7+2 chars
+                                       "\"field1\" : %.2f, "   // 11+5+2 chars
+                                       "\"field2\" : %.2f, "   // 11+7+2 chars
+                                       "\"field3\" : %.2f }",  // 11+5+2 chars
+                                    millis()/1000,
+                                    bme.readTemperature(),
+                                    bme.readPressure(),
+                                    bme.readHumidity());
+    return String(update);
 }
 
 static void printValues() {
