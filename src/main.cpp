@@ -7,15 +7,15 @@
 #include "server.h"
 
 #include <Wire.h>
-#include <SPI.h>
+//#include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 
-
 static void printValues();
 String hydroThermoBaric();
+String nitrousOxide();
 
 Adafruit_BME280 bme; // I2C
 
@@ -40,6 +40,8 @@ void setup() {
     Api apis[] = {
                     {.name = "/hydroThermoBaric",
                      .callback = hydroThermoBaric},
+                    {.name = "/nitrousOxide",
+                     .callback = nitrousOxide},
                  };
     serverSetup(apis, sizeof(apis)/sizeof(apis[0]));
 
@@ -47,7 +49,6 @@ void setup() {
 
     if (! bme.begin(0x76, &Wire)) {
         Serial.println("Could not find a valid BME280 sensor, check wiring!");
-        while (1);
     }
 
     Serial.println("-- Default Test --");
@@ -147,10 +148,37 @@ void loop() {
     //delay(5000);
 }
 
+String nitrousOxide()
+{
+    // enable the mics6814 sensor, 
+    //digitalWrite(A4, true); not an output capable pin on huzzah32 :(
+    // possible maybe wire it to 3V ?
+
+    // ADC2 exclusively used by WiFi, prohibiting A0 and A1 :(
+    // possibly maybe disable wifi to read ?
+    //int nh3 = analogRead(A0);
+    //int red = analogRead(A1); 
+    int oxi = analogRead(A2);
+
+    char response[128];
+    snprintf(response, sizeof(response), "{ \"nh3\" : %d, "
+                                            "\"red\" : %d, "
+                                            "\"oxi\" : %d }",
+                                        0, 0, oxi);
+    return response;
+}
+
 String hydroThermoBaric()
 {
     printValues();
-    return "";
+    char response[128]; //68
+    snprintf(response, sizeof(response), "{ \"temperature\" : %.2f, "   // 18+5+2 chars
+                                           "\"pressure\" : %.2f, "      // 13+7+2 chars
+                                           "\"humidity\" : %.2f }",     // 13+5+2 chars 
+                                        bme.readTemperature(),
+                                        bme.readPressure(),
+                                        bme.readHumidity());
+    return String(response);
 }
 
 static void printValues() {
