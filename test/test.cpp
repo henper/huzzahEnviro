@@ -1,5 +1,6 @@
 
 #include <unity.h>
+#include <ArduinoJson.h>
 #include "updates.h"
 
 void jsonifier_empty()
@@ -35,12 +36,32 @@ void jsonifier_1entry()
     TEST_ASSERT_EQUAL_STRING(expected2, actual2);
 }
 
+void jsonifier_validation()
+{
+    Updates updates("123456789ABCDEFG");
+
+    fields entry1 = {.delta_t = 0,
+                     .field1 = 1};
+    updates.add(entry1);
+
+    fields entry2 = {.delta_t = 1,
+                     .field1 = 2};
+    updates.add(entry2);
+
+    char* json = updates.serialize();
+
+    StaticJsonDocument<1024> doc;
+    DeserializationError error = deserializeJson(doc, json);
+    TEST_ASSERT(!error);
+}
+
 int main(int argc, char **argv)
 {
     UNITY_BEGIN();
 
     RUN_TEST(jsonifier_empty);
     RUN_TEST(jsonifier_1entry);
+    RUN_TEST(jsonifier_validation);
 
     return 0;
 }
