@@ -20,7 +20,6 @@
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
-            //"miDebuggerPath": "/path/to/gdb",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",
@@ -39,7 +38,7 @@
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": {
                 "type": "PlatformIO",
-                "task": "Pre-Debug (featheresp32)"
+                "task": "Pre-Debug"
             }
         },
         {
@@ -50,6 +49,16 @@
             "projectEnvName": "featheresp32",
             "toolchainBinDir": "C:/Users/Henrik/.platformio/packages/toolchain-xtensa32/bin",
             "internalConsoleOptions": "openOnSessionStart"
+        },
+        {
+            "type": "platformio-debug",
+            "request": "launch",
+            "name": "PIO Debug (without uploading)",
+            "executable": "c:/Projects/repos/huzzahEnviro/.pio/build/featheresp32/firmware.elf",
+            "projectEnvName": "featheresp32",
+            "toolchainBinDir": "C:/Users/Henrik/.platformio/packages/toolchain-xtensa32/bin",
+            "internalConsoleOptions": "openOnSessionStart",
+            "loadMode": "manual"
         }
     ]
 }

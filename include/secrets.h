@@ -6,7 +6,7 @@ const char* ssid = "biggie";
 const char* password = "lusky_812";
 
 // Replace with your thingspeak credentials
-const String THNGSPK_CHANNEL_ID = "1441085";
-const String THNGSPK_WRITE_API_KEY = "ZM06WBN5AS6PGCEN";
+const String THNGSPK_CHANNEL_ID = "1570112";
+#define THNGSPK_WRITE_API_KEY "SACGB2NKL8XT9ZPD"
 
 #endif

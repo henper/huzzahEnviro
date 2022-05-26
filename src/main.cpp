@@ -5,6 +5,7 @@
 #include <WiFi.h>
 #include "secrets.h"
 #include "server.h"
+#include "updates.h"
 
 #include <Wire.h>
 //#include <SPI.h>
@@ -12,25 +13,25 @@
 #include <Adafruit_BME280.h>
 #include "Adafruit_PM25AQI.h"
 
+#include <limits>
 
 #define SEALEVELPRESSURE_HPA (1013.25)
 #define CUBE(x) (x*x*x)
 
-static void printValues();
-String particulateMatter();
-String hydroThermoBaric();
+static String printValues();
+
 String nitrousOxide();
-String initializeThingSpeakJson();
-String finalizeThingSpeakJson(String);
 String pendingUpdates();
+void particulateMatter(float* pm25, float* pm100);
+void hydroThermoBaric(float* temp, float* pressure, float* humidity);
 
 Adafruit_BME280 bme; // I2C
 Adafruit_PM25AQI aqi = Adafruit_PM25AQI();
 
-unsigned long samplingInterval = 60*1000;
-unsigned long updateInterval = 10*60*1000;
-String updates;
+unsigned long samplingInterval = 1000;
+unsigned long updateInterval = 2*1000;
 
+Updates updates(THNGSPK_WRITE_API_KEY);
 WiFiClient client;
 
 void setup() {
@@ -53,10 +54,8 @@ void setup() {
     
     // Start web server
     Api apis[] = {
-                    {.name = "/hydroThermoBaric",
-                     .callback = hydroThermoBaric},
-                    {.name = "/nitrousOxide",
-                     .callback = nitrousOxide},
+                    {.name = "/serialLog",
+                     .callback = printValues},
                     {.name = "/pendingUpdates",
                      .callback = pendingUpdates}
                  };
@@ -160,64 +159,101 @@ void setup() {
     delayTime = 12;
 */
 
-    Serial.println();
+    // make sure nothing is waiting in the client
+    if (client.available())
+    {
+        Serial.print("Junk in client: ");
+        while (client.available())
+            Serial.print((char)client.read());
+        Serial.println("");
+    }
 
-    updates = initializeThingSpeakJson();
+    Serial.println();
 }
 
 
-void loop() {
-
-    unsigned long currentTime = millis();
+void loop()
+{
+    unsigned long startTime = millis();
 
     // Take care of any incoming HTTP requests
     //handleClient();
 
-    static unsigned long lastUpdateTime = currentTime; // next update in updateInterval
-    if (currentTime - lastUpdateTime >= updateInterval)
+    static unsigned long lastUpdateTime = startTime; // next update in updateInterval
+    if (startTime - lastUpdateTime >= updateInterval)
     {
-        lastUpdateTime = currentTime;
+        lastUpdateTime = startTime;
 
         if(client.connect("api.thingspeak.com", 80))
         {
-            updates = finalizeThingSpeakJson(updates);
+            char* json = updates.serialize();
+
+            String JSON = String(json);
+            updates.reset();
+
+            Serial.println(JSON);
+
             client.println(String("POST /channels/"+THNGSPK_CHANNEL_ID+"/bulk_update.json HTTP/1.1"));
             client.println("Host: api.thingspeak.com");
             client.println("User-Agent: mw.doc.bulk-update (Arduino ESP8266)");
             client.println("Connection: close");
             client.println("Content-Type: application/json");
-            client.println("Content-Length: "+String(updates.length()+1));
+            client.println("Content-Length: "+JSON.length()+1);
             client.println();
-            client.println(updates);
+            size_t numCharsWritten = client.println(json);
 
-            updates = initializeThingSpeakJson();
-            delay(250);
-            Serial.println(client.parseFloat()); // wtf?
-            String resp = String(client.parseInt());
-            Serial.println("Response code:"+resp); // Print the response code. 202 indicates that the server has accepted the response
+            //Serial.print("JSON data available to wrte: "); Serial.println(strlen(json));
+            //Serial.print("JSON data written to client: "); Serial.println(numCharsWritten);
+
+            //for (int i = 0; i < strlen(json); i++)
+            //    client.print(json[i]);
+
+            while (client.connected())
+            {
+                if (client.available())
+                    Serial.print((char)client.read());
+            }
+
+            //Serial.println(client.parseFloat()); // wtf?
+            //String resp = String(client.parseInt());
+            //Serial.println("Response code:"+resp); // Print the response code. 202 indicates that the server has accepted the response
+
+            updates.reset();
         }
         else
         {
             Serial.println("Failed to connect to ThingSpeak");
-        }           
+        }     
     }
 
-    static unsigned long lastSamplingTime = currentTime - samplingInterval; // next sample, now!
-    if (currentTime - lastSamplingTime >= samplingInterval)
+    static unsigned long lastSamplingTime = startTime - samplingInterval; // next sample, now!
+    if (startTime - lastSamplingTime >= samplingInterval)
     {
-        lastSamplingTime = currentTime;
+        lastSamplingTime = startTime;
 
         // Only needed in forced mode! In normal mode, you can remove the next line.
         bme.takeForcedMeasurement(); // has no effect in normal mode
 
-        updates = updates + hydroThermoBaric();
+        fields entry = {0};
+        entry.delta_t = lastSamplingTime / 1000;
+        hydroThermoBaric(&entry.field1, &entry.field2, &entry.field3);
+        particulateMatter(&entry.field4, &entry.field5);
 
-        updates = updates + particulateMatter();
+        if (updates.getNumEntries() == updates.add(entry))
+            Serial.println("ERROR: updates buffer full!");
     }
 
     // sleep until next action
-    unsigned long executionTime = millis() - currentTime; // handle wrap-around?
+    unsigned long executionTime, endTime = millis();
+    
+    if (endTime > startTime)
+        executionTime = endTime - startTime;
+    else
+    {
+        executionTime = ULONG_MAX - startTime + endTime; // account for wrap-around
+    }
     unsigned long sleepTime = (samplingInterval - executionTime);
+
     Serial.print("Sleep time: "); Serial.println(sleepTime);
     delay(sleepTime);
 
@@ -226,52 +262,14 @@ void loop() {
 
 }
 
-String initializeThingSpeakJson()
-{
-    return String("{ \"write_api_key\" : \"" + THNGSPK_WRITE_API_KEY + "\", "
-                    "\"updates\" : [");
-}
-
-String finalizeThingSpeakJson(String str)
-{
-    str.remove(str.length()-2,2); // eat ", "
-    return str + "] }";
-}
-
-String pendingUpdates()
-{
-    return finalizeThingSpeakJson(updates);
-}
-
-String particulateMatter()
+void particulateMatter(float* pm25, float* pm100)
 {
     PM25_AQI_Data data;
 
     if (! aqi.read(&data)) {
         Serial.println("Could not read from AQI");
-        return "";
+        //return "";
     }
-
-    Serial.println();
-    Serial.println(F("---------------------------------------"));
-    Serial.println(F("Concentration Units (standard)"));
-    Serial.println(F("---------------------------------------"));
-    Serial.print(F("PM 1.0: ")); Serial.print(data.pm10_standard);
-    Serial.print(F("\t\tPM 2.5: ")); Serial.print(data.pm25_standard);
-    Serial.print(F("\t\tPM 10: ")); Serial.println(data.pm100_standard);
-    Serial.println(F("Concentration Units (environmental)"));
-    Serial.println(F("---------------------------------------"));
-    Serial.print(F("PM 1.0: ")); Serial.print(data.pm10_env);
-    Serial.print(F("\t\tPM 2.5: ")); Serial.print(data.pm25_env);
-    Serial.print(F("\t\tPM 10: ")); Serial.println(data.pm100_env);
-    Serial.println(F("---------------------------------------"));
-    Serial.print(F("Particles > 0.3um / 0.1L air:")); Serial.println(data.particles_03um);
-    Serial.print(F("Particles > 0.5um / 0.1L air:")); Serial.println(data.particles_05um);
-    Serial.print(F("Particles > 1.0um / 0.1L air:")); Serial.println(data.particles_10um);
-    Serial.print(F("Particles > 2.5um / 0.1L air:")); Serial.println(data.particles_25um);
-    Serial.print(F("Particles > 5.0um / 0.1L air:")); Serial.println(data.particles_50um);
-    Serial.print(F("Particles > 10 um / 0.1L air:")); Serial.println(data.particles_100um);
-    Serial.println(F("---------------------------------------"));
 
     /* PMS5003 sensor returns standardized PM2.5 and PM10 AQI measurements in µg/m^3
      * but without precision or explanation.
@@ -303,14 +301,14 @@ String particulateMatter()
         particleMassConcentrations[i] = numParticles[i] * particleMassConcFactor[i];
     }
 
-    float pm25 = 0.0, pm100 = 0.0;
-    for (int i = 0; i < 3;  pm25 += particleMassConcentrations[i++]);
-    for (int i = 0; i < 5; pm100 += particleMassConcentrations[i++]);
+    *pm25 = *pm100 = 0.0;
+    for (int i = 0; i < 3;  *pm25 += particleMassConcentrations[i++]);
+    for (int i = 0; i < 5; *pm100 += particleMassConcentrations[i++]);
 
-    Serial.print("PM2.5 calculated: "); Serial.print(pm25);
-    Serial.print(" PM10 calculated: "); Serial.println(pm100);
+    Serial.print("PM2.5 calculated: "); Serial.print(*pm25);
+    Serial.print(" PM10 calculated: "); Serial.println(*pm100);
 
-    char update[128]; //78
+    /* char update[128]; //78
     snprintf(update, sizeof(update), "{ \"delta_t\" : %lu, "     // 13+7+2 chars
                                        "\"field4\" : %u, "
                                        "\"field5\" : %u }, ",
@@ -318,7 +316,7 @@ String particulateMatter()
                                     data.pm25_standard,
                                     data.pm100_standard);
 
-    return update;
+    return update; */
 }
 
 String nitrousOxide()
@@ -341,10 +339,10 @@ String nitrousOxide()
     return response;
 }
 
-String hydroThermoBaric()
+void hydroThermoBaric(float* temp, float* pressure, float* humidity)
 {
     //printValues();
-    char update[128]; //78
+    /* char update[128]; //78
     snprintf(update, sizeof(update), "{ \"delta_t\" : %lu, "     // 13+7+2 chars
                                        "\"field1\" : %.2f, "     // 11+5+2 chars
                                        "\"field2\" : %.2f, "     // 11+7+2 chars
@@ -353,10 +351,19 @@ String hydroThermoBaric()
                                     bme.readTemperature(),
                                     bme.readPressure(),
                                     bme.readHumidity());
-    return String(update);
+    return String(update); */
+
+    *temp     = bme.readTemperature();
+    *pressure = bme.readPressure();
+    *humidity = bme.readHumidity();
 }
 
-static void printValues() {
+String pendingUpdates()
+{
+    return updates.serialize();
+}
+
+static String printValues() {
     // bme280
     Serial.print("Temperature = ");
     Serial.print(bme.readTemperature());
@@ -381,7 +388,7 @@ static void printValues() {
     PM25_AQI_Data data;
     if (! aqi.read(&data)) {
         Serial.println("Could not read from AQI");
-        return;
+        return "";
     }
     Serial.println("AQI reading success");
 
@@ -405,4 +412,6 @@ static void printValues() {
     Serial.print(F("Particles > 5.0um / 0.1L air:")); Serial.println(data.particles_50um);
     Serial.print(F("Particles > 10 um / 0.1L air:")); Serial.println(data.particles_100um);
     Serial.println(F("---------------------------------------"));
+
+    return "Immideate values written to serial console!";
 }

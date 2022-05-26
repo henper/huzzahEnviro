@@ -16,10 +16,12 @@ private:
     char* buf;
     unsigned int bufSize, numEntries;
     char key[17];
+    bool serialized;
 public:
     Updates(const char* api_key);
     ~Updates() { free(buf); }
+    unsigned int getNumEntries() {return numEntries;}
+    unsigned int add(fields entry);
     char* serialize();
-    int add(fields entry);
     void reset();
 };
